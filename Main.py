@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import time, requests, gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Base URl of Linkedin Public Page
+# Base URL of LinkedIn Public Page
 base_url = "https://www.linkedin.com/jobs/"
 # Specific search criteria for fetching info
 params = "search?keywords=&location=Cayman%20Islands&geoId=101679506&trk=public_jobs_jobs-search-bar_search-submit"
@@ -12,7 +12,7 @@ params = "search?keywords=&location=Cayman%20Islands&geoId=101679506&trk=public_
 url = base_url + params
 print(url)
 
-# Initiating the driver (Chrome) but browser will not opened but it should be installed
+# Initiating the driver (Chrome) but the browser will not open
 headless_mode = webdriver.ChromeOptions()
 headless_mode.add_argument('headless')
 driver = webdriver.Chrome(options=headless_mode)
@@ -23,7 +23,7 @@ print("URL opened Successfully")
 
 # Storing the scrolling page value from last scrolled
 last_scrolled_to = driver.execute_script("return document.body.scrollHeight")
-# Running this code to scroll till the end of the page to get all info in the page as it is a lazyloading page
+# Running this code to scroll till the end of the page to get all info on the page as it is a lazyloading page
 while True:
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(2)
@@ -153,9 +153,9 @@ try:
         if my_description[job] == " " :
             print("Something went wrong and we found empty Description for Job ID :", my_Job_ID[job])
 
-    print(f"Extracted ({len(my_description)}, {len(my_Job_industry)}) Descriptions and Miscelleneous details Successfully respectively")
+    print(f"Extracted ({len(my_description)}, {len(my_Job_industry)}) Descriptions and Miscellaneous details Successfully respectively")
 except Exception as e:
-    print("Something went wrong whule extracting Description and some Miscelleneous Info :", e)
+    print("Something went wrong while extracting Description and some Miscellaneous Info :", e)
 
 data = {}
 
@@ -207,18 +207,4 @@ else:
 # Get the Google Spreadsheet link
 spreadsheet_link = worksheet.url
 print("Google Spreadsheet Link:", spreadsheet_link)
-
-# {
-#   "type": "service_account",
-#   "project_id": "linkedin-jobs-413209",
-#   "private_key_id": "d05ae0f93004e73f8f6a64325c5af5bf5a80cfc4",
-#   "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCIdRdBJtFc69VD\n6y/6qzQ5WY7hUXu1sUnTvA26CL/prqdS2VACqI02inckJ/dXRGNnSPqj60ERT5V6\nMV5OynN5qbroD3YxDc8JNm2CwDIH4a76Pn/5uOlZHoj+qYfAmNC3cbiqtlraNB2o\nydld96vTwJjPz52OBtMncE8+VGHULrWhq0684jp/af+ZxFX6FYgEppq7dprYY+aX\nJyjFq/b1V4MSBxvj1VK/vnyi/GAPSqzsonJqoOXT+LqBbey8wmR1AbRnuy5otykZ\ns30e9/g9HPr0aadGenW7agPWHP98hkyodqluiG+12L7vYc4wkzdbxx83zuL0m1Wq\nfjkmVfgZAgMBAAECggEADY3WiycoQUWU6mklsTgTjjrCFslkM1jyegXs4HSsCLHL\ndvmU7p6qtXyCzGRCjOLYc32WlR+crUktZ3TDPFT0Vrpa5rVadRGSZgTc/dF0vBRZ\nBWGd4+0lEzAVms4LaOsE7aPDHFnT+RFCJ5jdGW4CHZy80QTQo+HeVBreFCqHiRlx\ngjpGwd3YrDFSbd8cb5up9BB2KwfQ4PQ/bFuYBMxS7y0uYwdSM1kiZFuHReIDTY43\nChabKxK50Trci4AlmhgxmRd3NZ6/a0VegJXKNJNCKDilToEjspBO28yWVVUk5/MU\nUD1xq4GRvd+Gd2iEIBmcuq9cLpcZKoHcO3nDMyhknQKBgQC/BjvkwiciauoRGoBZ\nJLCHxLTgXOApkVbFlGcOcIlQ1tzcCScFuOLOiAl/p8+UKNnqnGjJU8P4AjfXtnMk\ngbAjtyUsVBVKoKz6ZWk7yK+pF0QlIoGXpdkoQYXz3uZp89eReDq7V9rRxLj72jcn\npoJM5tR17J4LQGfePWj6w3+EHwKBgQC231jGnPDEIV9pInX8On+CzAiou2Xg13pj\naKTLtEcqzIF8dmJF9kbGwE2JIuwmbso97gCkAKyTRCBg7HwHrjaQIT/KvojrAOnn\nlASd7DBD5RJPLKqw9HXHOcI14RR9+VAq8NLeBO7FRt7putJyf+4lKLecnpqFgGhR\nZct0VOE8xwKBgEKI/lWYlp7zVGHutCPYlrBDgKjhUKbJ28pn/VlXM0z3+eeePHxO\nwJklYwGWxsOZUwXXwtvVFF4PD7pP710Y2uwlv4noI55hxr5UkknjhePEmdTBZxgW\nCURvRiQCUIk5CK2/jd1xJWOJPNFkWW+zHJGCmSAV8ZqDrWoIQ8eMTp8LAoGBALNw\nADoScKTiYi5VJBQ0ij2bWrvF9bdjd7HnUhyXbmVueXfY6aDggJ4wv2PaooEroMKX\nsIU8LBnsdSDlquYWaW+PUHrt7oc5REp5EPasdMeKFCcgGvS7Sn4MDKa1jlf1tFYO\nK7qyeF+WpNAPAsRbBx/rDg9eCR0J3FJSYgpp5wCtAoGAGkjUEBKoB3bNGj3fAWtN\nwRSLPxmkKmDBf2Grcoldk8iqbMHCP4QEM9pQ4Z7dAkOFkObLsAZynO5KOh+10Zgm\nkbliEndN9+aHHyNehj1bhTjC/WWmEuuT92R28bZyuJzKHXwRddARDektARD8GmHg\nlgBN+lTwY7jQ7T7e/9AzFNI=\n-----END PRIVATE KEY-----\n",
-#   "client_email": "jobscrapper@linkedin-jobs-413209.iam.gserviceaccount.com",
-#   "client_id": "115814442066477511926",
-#   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-#   "token_uri": "https://oauth2.googleapis.com/token",
-#   "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-#   "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/jobscrapper%40linkedin-jobs-413209.iam.gserviceaccount.com",
-#   "universe_domain": "googleapis.com"
-# }
 
