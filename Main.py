@@ -194,7 +194,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_name("JSON.json", scope)
 client = gspread.authorize(creds)
 
 # Open the worksheet
-worksheet = client.open("Rifat Job Feed").worksheet("Rifat Job Feed")
+worksheet = client.open("Job Feed").worksheet("Jobs")
 
 if len(data) > 0:
     worksheet.clear()
