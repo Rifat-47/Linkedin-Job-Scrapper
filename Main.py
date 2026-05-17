@@ -1,210 +1,222 @@
-# Importing Required Packages
+import time
+import requests
+import gspread
+import argparse
+from urllib.parse import urlencode
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
-import time, requests, gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Base URL of LinkedIn Public Page
-base_url = "https://www.linkedin.com/jobs/"
-# Specific search criteria for fetching info
-params = "search?keywords=&location=Cayman%20Islands&geoId=101679506&trk=public_jobs_jobs-search-bar_search-submit"
-# Main URl to get Jons from
-url = base_url + params
-print(url)
+# ---------------------------------------------------------------------------
+# Known location → geoId mappings (add more as needed)
+# Find geoId by searching LinkedIn manually and inspecting the URL
+# ---------------------------------------------------------------------------
+GEO_IDS = {
+    "united states":    "103644278",
+    "united kingdom":   "101165590",
+    "canada":           "101174742",
+    "australia":        "101452733",
+    "germany":          "101282230",
+    "france":           "105015875",
+    "india":            "102713980",
+    "singapore":        "102454443",
+    "remote":           "92000000",
+    "bangladesh":       "",
+}
 
-# Initiating the driver (Chrome) but the browser will not open
-headless_mode = webdriver.ChromeOptions()
-headless_mode.add_argument('headless')
-driver = webdriver.Chrome(options=headless_mode)
 
-# Opening the URl in Browser but it will not be visible
-driver.get(url)
-print("URL opened Successfully")
+def build_url(location: str, keyword: str = "", geo_id: str = "") -> str:
+    params = {
+        "keywords": keyword,
+        "location": location,
+        "trk": "public_jobs_jobs-search-bar_search-submit",
+    }
+    if geo_id:
+        params["geoId"] = geo_id
+    return "https://www.linkedin.com/jobs/search?" + urlencode(params)
 
-# Storing the scrolling page value from last scrolled
-last_scrolled_to = driver.execute_script("return document.body.scrollHeight")
-# Running this code to scroll till the end of the page to get all info on the page as it is a lazyloading page
-while True:
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(2)
-    scrolled_to = driver.execute_script("return document.body.scrollHeight")
-    if scrolled_to == last_scrolled_to:
-        break
-    last_scrolled_to = scrolled_to
-print("Page scrolled successfully till last")
 
-# Initiating BeautifulSoup to extract info from the fully loaded page
-html = driver.page_source
-soup = BeautifulSoup(html, "html.parser")
-driver.quit()
+def make_headless_driver() -> webdriver.Chrome:
+    opts = webdriver.ChromeOptions()
+    opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=opts)
 
-# Storing Job ID
-my_Job_ID = [job['data-row'] for job in soup.find_all("div", class_="base-card") if 'data-row' in job.attrs]
-print(f"Extracted {len(my_Job_ID)} Job ID's successfully")
 
-my_Tracking_ID = [job.get('data-tracking-id') for job in soup.find_all("div", class_="base-card") if 'data-tracking-id' in job.attrs]
-print(f"Extracted {len(my_Tracking_ID)} Job Tracking ID's successfully")
+def scroll_and_get_html(url: str) -> str:
+    driver = make_headless_driver()
+    driver.get(url)
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    while True:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+    html = driver.page_source
+    driver.quit()
+    return html
 
-# Storing Posted Date
-my_posted_date = [job.find("time", class_="job-search-card__listdate")['datetime'] if "None" not in str(type(job.find("time", class_="job-search-card__listdate"))) else job.find("time", class_="job-search-card__listdate--new")['datetime'] for job in soup.find_all(
-    "div", class_="base-search-card")]
-print(f"Extracted {len(my_posted_date)} Posted dates successfully")
 
-# Storing Months
-my_Job_Posted_Month = [job[6:8] for job in my_posted_date]
+def parse_job_listings(html: str) -> list[dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.find_all("div", class_="base-card")
+    jobs = []
+    for card in cards:
+        time_new = card.find("time", class_="job-search-card__listdate--new")
+        time_old = card.find("time", class_="job-search-card__listdate")
+        time_el = time_old or time_new
+        if not time_el:
+            continue
+        posted_date = time_el.get("datetime", "")
+        jobs.append({
+            "JobID":               card.get("data-row", ""),
+            "ID":                  card.get("data-tracking-id", ""),
+            "name":                (card.find("span", class_="sr-only") or {}).get_text(strip=True),
+            "hiring_company":      (card.find("h4", class_="base-search-card__subtitle") or {}).get_text(strip=True),
+            "location":            (card.find("span", class_="job-search-card__location") or {}).get_text(strip=True),
+            "posted_time_friendly": time_el.get_text(strip=True),
+            "posted_time":         posted_date,
+            "themonth":            posted_date[5:7],
+            "theyear":             posted_date[:4],
+            "theurl":              (card.find("a", class_="base-card__full-link") or {}).get("href", ""),
+            "source":              "LinkedIn",
+        })
+    return jobs
 
-# Storing Year
-my_Job_Posted_Year = [job[:5] for job in my_posted_date]
 
-# Storing all titles
-my_titles = [job.find("span", class_="sr-only").text.strip() for job in soup.find_all(
-    "div", class_="base-search-card")]
-print(f"Extracted {len(my_titles)} Titles successfully")
+def fetch_job_detail(job_url: str, max_retries: int = 15) -> tuple[str, list[tuple]]:
+    """Returns (description, industry_criteria_list)."""
+    description = ""
+    criteria = []
 
-# Storing Companies
-my_companies = [job.find("h4", class_="base-search-card__subtitle").text.strip() for job in soup.find_all(
-    "div", class_="base-search-card")]
-print(f"Extracted {len(my_companies)} Companies successfully")
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(job_url, timeout=10)
+            if resp.status_code != 200:
+                time.sleep(1)
+                continue
+            soup = BeautifulSoup(resp.content, "html.parser")
+            desc_el = soup.find("div", class_="show-more-less-html__markup")
+            if desc_el:
+                description = desc_el.get_text(strip=True)
+                criteria = _extract_criteria(soup)
+                return description, criteria
+        except requests.RequestException:
+            time.sleep(1)
 
-# Storing Locations
-my_locations = [job.find("span", class_="job-search-card__location").text.strip() for job in soup.find_all(
-    "div", class_="base-search-card")]
-print(f"Extracted {len(my_locations)} Locations successfully")
+    # Fallback to Selenium if requests keeps failing
+    try:
+        driver = make_headless_driver()
+        driver.get(job_url)
+        time.sleep(2)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        driver.quit()
+        desc_el = soup.find("div", class_="show-more-less-html__markup")
+        if desc_el:
+            description = desc_el.get_text(strip=True)
+        criteria = _extract_criteria(soup)
+    except Exception as e:
+        print(f"  Selenium fallback failed for {job_url}: {e}")
 
-# Storing Listed Date
-my_listed_date = [job.find("time", class_="job-search-card__listdate").text.strip() if "None" not in str(type(job.find("time", class_="job-search-card__listdate"))) else job.find("time", class_="job-search-card__listdate--new").text.strip() for job in soup.find_all(
-    "div", class_="base-search-card")]
-print(f"Extracted {len(my_listed_date)} Listed dates successfully")
+    return description, criteria
 
-# Storing JOB URL
-my_Job_URL = [job.find("a", class_="base-card__full-link", href=True)['href'] for job in soup.find_all(
-    "div", class_="base-search-card")]
-print(f"Extracted {len(my_Job_URL)} JOB URL's successfully")
 
-# Storing Description
-my_description = {}
-my_Job_industry = []
+def _extract_criteria(soup: BeautifulSoup) -> list[tuple]:
+    items = soup.find_all("li", class_="description__job-criteria-item")
+    result = []
+    for item in items:
+        heading = item.find("h3", class_="description__job-criteria-subheader")
+        value = item.find("span", class_="description__job-criteria-text--criteria")
+        if heading and value:
+            result.append((heading.get_text(strip=True), value.get_text(strip=True)))
+    return result
 
-try:
-    for job in range(len(my_Job_URL)):
-        page = requests.get(my_Job_URL[job])
-        cat_sub_headings = []
-        cat_text = []
-        if page.status_code != 200:
-            count = 0
-            while page.status_code != 200:
-                page = requests.get(my_Job_URL[job])
-                soup = BeautifulSoup(page.content, "html.parser")
-                my_description.update(
-                    {job: soup.find("div", class_="show-more-less-html__markup").text.strip() if "None" not in str(type(soup.find("div", class_="show-more-less-html__markup"))) else " "})
-                cat_sub_headings = [job.find(
-                    "h3",  class_="description__job-criteria-subheader").text.strip() if "None" not in str(type(soup.findAll("h3",  class_="description__job-criteria-subheader"))) else " " for job in soup.findAll(
-                    "li",  class_="description__job-criteria-item")]
-                cat_text = [job.find(
-                    "span",  class_="description__job-criteria-text--criteria").text.strip() if "None" not in str(type(soup.findAll("span",  class_="description__job-criteria-text--criteria"))) else " " for job in soup.findAll(
-                    "li",  class_="description__job-criteria-item")]
-                if job >= len(my_Job_industry):
-                    my_Job_industry.append(
-                        tuple(zip(cat_sub_headings, cat_text)))
-                else:
-                    my_Job_industry[job] = tuple(
-                        zip(cat_sub_headings, cat_text))
-                count += 1
-                if count >= 15 and ("None" in str(type(soup.find("div", class_="show-more-less-html__markup")))):
-                    headless_mode = webdriver.ChromeOptions()
-                    headless_mode.add_argument('headless')
-                    driver = webdriver.Chrome(options=headless_mode)
-                    driver.get(my_Job_URL[job])
-                    time.sleep(2)
-                    html = driver.page_source
-                    soup = BeautifulSoup(html, "html.parser")
-                    my_description.update(
-                        {job: soup.find("div", class_="show-more-less-html__markup").text.strip() if "None" not in str(type(soup.find("div", class_="show-more-less-html__markup"))) else " "})
-                    cat_sub_headings = [job.find(
-                        "h3",  class_="description__job-criteria-subheader").text.strip() if "None" not in str(type(soup.findAll("h3",  class_="description__job-criteria-subheader"))) else " " for job in soup.findAll(
-                        "li",  class_="description__job-criteria-item")]
-                    cat_text = [job.find(
-                        "span",  class_="description__job-criteria-text--criteria").text.strip() if "None" not in str(type(soup.findAll("span",  class_="description__job-criteria-text--criteria"))) else " " for job in soup.findAll(
-                        "li",  class_="description__job-criteria-item")]
-                    if job >= len(my_Job_industry):
-                        my_Job_industry.append(tuple(zip(cat_sub_headings, cat_text)))
-                    else:
-                        my_Job_industry[job] = tuple(
-                            zip(cat_sub_headings, cat_text))
-                    driver.quit()
-                    if (my_description[job] != " ") or count > 18:
-                        break
-        else:
-            soup = BeautifulSoup(page.content, "html.parser")
-            my_description.update(
-                {job: soup.find("div", class_="show-more-less-html__markup").text.strip() if "None" not in str(type(soup.find("div", class_="show-more-less-html__markup"))) else " "})
-            cat_sub_headings = [job.find(
-                "h3",  class_="description__job-criteria-subheader").text.strip() if "None" not in str(type(soup.findAll("h3",  class_="description__job-criteria-subheader"))) else " " for job in soup.findAll(
-                "li",  class_="description__job-criteria-item")]
-            cat_text = [job.find(
-                "span",  class_="description__job-criteria-text--criteria").text.strip() if "None" not in str(type(soup.findAll("span",  class_="description__job-criteria-text--criteria"))) else " " for job in soup.findAll(
-                "li",  class_="description__job-criteria-item")]
-            if job >= len(my_Job_industry):
-                my_Job_industry.append(
-                    tuple(zip(cat_sub_headings, cat_text)))
-            else:
-                my_Job_industry[job] = tuple(
-                    zip(cat_sub_headings, cat_text))
-        if my_description[job] == " " :
-            print("Something went wrong and we found empty Description for Job ID :", my_Job_ID[job])
 
-    print(f"Extracted ({len(my_description)}, {len(my_Job_industry)}) Descriptions and Miscellaneous details Successfully respectively")
-except Exception as e:
-    print("Something went wrong while extracting Description and some Miscellaneous Info :", e)
+def scrape_location(location: str, keyword: str = "", geo_id: str = "") -> list[dict]:
+    geo_id = geo_id or GEO_IDS.get(location.lower(), "")
+    url = build_url(location, keyword, geo_id)
+    print(f"\nScraping: {url}")
 
-data = {}
+    html = scroll_and_get_html(url)
+    jobs = parse_job_listings(html)
+    print(f"Found {len(jobs)} job listings for '{location}'")
 
-key_val = 0
+    for i, job in enumerate(jobs):
+        print(f"  [{i+1}/{len(jobs)}] Fetching details: {job['name']} @ {job['hiring_company']}")
+        desc, criteria = fetch_job_detail(job["theurl"])
+        job["snippet"] = desc
+        for key, val in criteria:
+            job[key] = val
 
-for job in range(len(my_titles)):
-    data.update({job: {
-        "JobID": my_Job_ID[job],
-        "ID": my_Tracking_ID[job],
-        "name": my_titles[job],
-        "hiring_company": my_companies[job],
-        "posted_time_friendly": my_listed_date[job],
-        "snippet": my_description[job],
-        "location": my_locations[job],
-        "posted_time": my_posted_date[job],
-        "source": "Linkedin",
-        "theurl": my_Job_URL[job],
-        "themonth": my_Job_Posted_Month[job],
-        "theyear":my_Job_Posted_Year[job]
-    }})
-    for job_cat in my_Job_industry[job]:
-        data[job].update({job_cat[0]:job_cat[1]})
-    if len(list(data[job].keys())) >= key_val:
-        key_val = len(list(data[job].keys()))
+    return jobs
 
-print(f"Converted {len(data)} extracted data in DICT format")
 
-all_rows = []
+def push_to_sheets(all_jobs: list[dict], sheet_name: str = "Job Feed", tab_name: str = "Jobs"):
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("JSON.json", scope)
+    client = gspread.authorize(creds)
+    worksheet = client.open(sheet_name).worksheet(tab_name)
 
-for job in range(len(data)):
-    all_rows.append(list(data[job].values()))
+    # Collect all unique keys (columns) in order
+    all_keys: list[str] = []
+    seen = set()
+    for job in all_jobs:
+        for k in job:
+            if k not in seen:
+                all_keys.append(k)
+                seen.add(k)
 
-# Google Sheets API credentials
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("JSON.json", scope)
-client = gspread.authorize(creds)
+    rows = [[job.get(k, "") for k in all_keys] for job in all_jobs]
 
-# Open the worksheet
-worksheet = client.open("Job Feed").worksheet("Jobs")
-
-if len(data) > 0:
     worksheet.clear()
-    worksheet.append_row(list(data[key_val].keys()))
-    worksheet.append_rows(all_rows)
-    print("Data has been successfully updated to Google Sheets.")
-else:
-    print("No job listings found.")
+    worksheet.append_row(all_keys)
+    worksheet.append_rows(rows)
+    print(f"\nUploaded {len(all_jobs)} jobs to Google Sheets.")
+    print("Spreadsheet:", worksheet.url)
 
-# Get the Google Spreadsheet link
-spreadsheet_link = worksheet.url
-print("Google Spreadsheet Link:", spreadsheet_link)
 
+def main():
+    parser = argparse.ArgumentParser(description="LinkedIn Public Jobs Scraper")
+    parser.add_argument(
+        "--locations", nargs="+",
+        default=["Cayman Islands"],
+        help='One or more locations, e.g. --locations "United States" "Canada" "Remote"',
+    )
+    parser.add_argument(
+        "--keyword", default="",
+        help='Job keyword filter, e.g. --keyword "Software Engineer"',
+    )
+    parser.add_argument(
+        "--geo-ids", nargs="+", default=[],
+        help="Optional geoIds matching each location in order",
+    )
+    parser.add_argument(
+        "--no-sheets", action="store_true",
+        help="Skip uploading to Google Sheets (print count only)",
+    )
+    args = parser.parse_args()
+
+    geo_ids = args.geo_ids + [""] * len(args.locations)  # pad with empty strings
+
+    all_jobs: list[dict] = []
+    for i, location in enumerate(args.locations):
+        jobs = scrape_location(location, keyword=args.keyword, geo_id=geo_ids[i])
+        all_jobs.extend(jobs)
+
+    print(f"\nTotal jobs scraped across all locations: {len(all_jobs)}")
+
+    if not args.no_sheets and all_jobs:
+        push_to_sheets(all_jobs)
+
+
+if __name__ == "__main__":
+    main()

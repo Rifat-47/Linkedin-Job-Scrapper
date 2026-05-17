@@ -1,2 +1,18 @@
-# ignoring this directory from git 
-venvname/
+# Virtual environment
+venv/
+
+# Google service account credentials (keep private!)
+JSON.json
+*.json
+
+# Debug output
+debug_output.html
+debug.py
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS files
+.DS_Store
+Thumbs.db
